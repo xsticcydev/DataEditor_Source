@@ -7,6 +7,7 @@
 --Read docs: https://devforum.roblox.com/t/a-new-free-datastore-editor-plugin/894063
 --Link to the plugin: https://www.roblox.com/library/6013845672/DataEditor
 
+
 local RS = game:GetService('RunService')
 
 if not RS:IsEdit() then
@@ -315,9 +316,14 @@ function queryValue(ValueName)
 			element = nil
 		end)
 		
+		element.Value.Focused:Connect(function()
+			element.Value.BackgroundColor3 = t.bg_darker
+		end)
+		
 		element.Value.FocusLost:Connect(function()
 			wait(0.1)
 			if element == nil then return end
+			element.Value.BackgroundColor3 = t.bg
 			local newVal = element.Value.Text
 			pcall(function()
 				value = tostring(ConnectedDataStore:GetAsync(ValueName))
