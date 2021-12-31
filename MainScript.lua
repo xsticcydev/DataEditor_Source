@@ -13,6 +13,23 @@ end
 local toolbar = plugin:CreateToolbar('Data Editor')
 local btn = toolbar:CreateButton('Toggle Editor', 'Toggle the Data Editor window.', 'rbxassetid://8402442532')
 local orderedDS = false
+local reverseListing = plugin:GetSetting("revList")
+
+local placeId = game.PlaceId
+
+local recents = plugin:GetSetting(tostring(placeId).."Recents")
+if not recents then
+	recents = {
+		DS = {},
+		Keys = {},
+	}
+end
+
+if reverseListing == nil then
+	reverseListing = false
+end
+
+local wasClosed = {}
 
 local widgetInfo = DockWidgetPluginGuiInfo.new(
 	Enum.InitialDockState.Float, -- type
@@ -53,6 +70,9 @@ local keyPerPage = 10
 local tempK = gui.Data._Key
 
 function convertString(s)
+	if string.sub(s, #s, #s) == '"' then
+		return string.sub(s, 2, #s-1)
+	end
 	if s == "nil" then
 		return nil
 	elseif tonumber(s) then
@@ -78,8 +98,8 @@ function status(txt,ok)
 end
 
 function getTxtBox()
-	if string.sub(gui.TxtBox.Text, #gui.TxtBox.Text-2,#gui.TxtBox.Text) == ".id" then
-		return game.Players:GetUserIdFromNameAsync(string.sub(gui.TxtBox.Text, 0,#gui.TxtBox.Text-3))
+	if string.sub(gui.TxtBox.Text, #gui.TxtBox.Text-2, #gui.TxtBox.Text) == ".id" then
+		return game.Players:GetUserIdFromNameAsync(string.sub(gui.TxtBox.Text, 0, #gui.TxtBox.Text-3))
 	end
 	return gui.TxtBox.Text
 end
@@ -126,16 +146,18 @@ function listCurrentPage()
 end
 
 function listOrderedDataStore()
-	dsPages = connDS:GetSortedAsync(true, keyPerPage)
+	dsPages = connDS:GetSortedAsync(not reverseListing, keyPerPage)
 	listCurrentPage()
 	reloadKeys()
-	gui.Data.NextPage.MouseButton1Click:Connect(function()
-		dsPages:AdvanceToNextPageAsync()
-		listCurrentPage()
-		reloadKeys()
-		gui.Data.CanvasPosition = Vector2.new(0,gui.Data.CanvasSize.Y.Offset)
-	end)
 end
+
+gui.Data.NextPage.MouseButton1Click:Connect(function()
+	dsPages:AdvanceToNextPageAsync()
+	listCurrentPage()
+	reloadKeys()
+	wait()
+	gui.Data.CanvasPosition = Vector2.new(0,gui.Data.CanvasSize.Y.Offset)
+end)
 
 function connectToDS()
 	if connDS ~= nil then
@@ -169,6 +191,11 @@ function connectToDS()
 		gui.Visible = true
 	end
 	connDSName = getTxtBox()
+	print(table.find(recents.DS, connDSName))
+	if not table.find(recents.DS, connDSName) then
+		table.insert(recents.DS, connDSName)
+		plugin:SetSetting(tostring(placeId).."Recents", recents)
+	end
 	gui.TxtBox.Text = ""
 	gui.TxtBox.PlaceholderText = "Key"
 	gui.DisconnectBtn.Visible = true
@@ -233,7 +260,7 @@ local function GetTableType(t)
 	return "array"
 end
 
-function reloadKeys(forceLO)
+function reloadKeys()
 	
 	gui.Data.NextPage.Visible = orderedDS
 	
@@ -316,6 +343,16 @@ function reloadKeys(forceLO)
 	
 	local i = 0
 	
+	local function getLen(t)
+		local len = 0
+		for key, value in pairs(t) do
+			len += 1
+		end
+		return len
+	end
+	
+	local len = getLen(keysTmp)
+	
 	for key, value in pairs(keysTmp) do
 		i += 1
 		if i % 100 == 0 then
@@ -323,18 +360,27 @@ function reloadKeys(forceLO)
 		end
 		local frame = tempK:Clone()
 		frame.KeyName.Text = key
+		if value == "nil" then
+			value = "nil"
+		elseif typeof(value) == "string" and string.sub(value, 1,1) ~= '"' then
+			value = '"'..value..'"'
+		end
 		frame.Value.Text = tostring(value)
 		frame.Name = key
 		frame.Visible = true
 		frame.Parent = gui.Data
 		frame.LayoutOrder = i
-		if forceLO then
-			frame.LayoutOrder = forceLO[key]
-		end
-		if orderedDS then
-			frame.LayoutOrder = value
-		end
 		frame.HideBtn.Visible = true
+		
+		
+		if orderedDS then
+			if reverseListing then
+				frame.LayoutOrder = len - value
+			else
+				frame.LayoutOrder = value
+			end
+		end
+		
 		
 		styleFrame(frame, true)
 		
@@ -368,7 +414,10 @@ function reloadKeys(forceLO)
 		local n = frame.AbsoluteSize.X/20
 		frame.Size = UDim2.new( 1,-12,0,  math.max(math.ceil(#frame.Value.Text/n), 2)*15  )
 		
-		local function listTable(t, indent)
+		local function listTable(t, indent, tKey)
+			
+			local oKey = key
+			
 			local n = 0
 			local tableI = 0
 			for _,_ in pairs(t) do n += 1 end
@@ -382,8 +431,13 @@ function reloadKeys(forceLO)
 				frame.KeyName.Text = key
 				frame.KeyName.Position += UDim2.fromOffset(indent*8,0)
 				frame.Expand.Position += UDim2.fromOffset(indent*8,0)
+				if value == "nil" then
+					value = "nil"
+				elseif typeof(value) == "string" and string.sub(value, 1,1) ~= '"' then
+					value = '"'..value..'"'
+				end
 				frame.Value.Text = tostring(value)
-				frame.Name = key
+				frame.Name = "oKey"..key..indent
 				frame.Visible = true
 				frame.Parent = gui.Data
 				frame.LayoutOrder = i
@@ -472,14 +526,30 @@ function reloadKeys(forceLO)
 					wait()
 					frame.Value.Text = "table: ..."
 					frame.tableSplit.Visible = true
-					local listedFrames = listTable(value, indent+1)
+					local listedFrames = listTable(value, indent+1, key)
 					
 					frame.Expand.Visible = true
 					frame.Expand.Rotation = 90
-
+					
+					if wasClosed[frame.Name] ~= nil then
+						for _, f in pairs(listedFrames) do
+							f.Visible = not wasClosed[frame.Name]
+						end
+						if wasClosed[frame.Name] == true then
+							frame.Expand.Rotation = 0
+						else
+							frame.Expand.Rotation = 90
+						end
+					end
+					
 					frame.Expand.MouseButton1Click:Connect(function()
 						for _, f in pairs(listedFrames) do
 							f.Visible = not f.Visible
+							if not f.Visible then
+								wasClosed[frame.Name] = true
+							else
+								wasClosed[frame.Name] = false
+							end
 						end
 						if frame.Expand.Rotation == 90 then
 							frame.Expand.Rotation = 0
@@ -511,14 +581,30 @@ function reloadKeys(forceLO)
 		if typeof(value) == "table" then
 			frame.Value.Text = "table: ..."
 			frame.tableSplit.Visible = true
-			local listedFrames = listTable(value, 1)
+			local listedFrames = listTable(value, 1, key)
 			
 			frame.Expand.Visible = true
 			frame.Expand.Rotation = 90
-
+			
+			if wasClosed[frame.Name] ~= nil then
+				for _, f in pairs(listedFrames) do
+					f.Visible = not wasClosed[frame.Name]
+				end
+				if wasClosed[frame.Name] == true then
+					frame.Expand.Rotation = 0
+				else
+					frame.Expand.Rotation = 90
+				end
+			end
+			
 			frame.Expand.MouseButton1Click:Connect(function()
 				for _, f in pairs(listedFrames) do
 					f.Visible = not f.Visible
+					if not f.Visible then
+						wasClosed[frame.Name] = true
+					else
+						wasClosed[frame.Name] = false
+					end
 				end
 				if frame.Expand.Rotation == 90 then
 					frame.Expand.Rotation = 0
@@ -552,6 +638,7 @@ function reloadKeys(forceLO)
 				reloadKeys()
 				return
 			end
+			--print(convertString(frame.Value.Text), typeof(convertString(frame.Value.Text)))
 			keysTmp[key] = convertString(frame.Value.Text)
 			reloadKeys()
 		end)
@@ -652,17 +739,22 @@ gui.InputBegan:Connect(function(i)
 	end
 end)
 
-function queryKey()
+function queryKey(name)
 	if not canQuery then return end
 	canQuery = false
 	gui.QueryBtn.ImageLabel.Image = "rbxassetid://6031302917"
 	if not connDS then canQuery = true; gui.QueryBtn.ImageLabel.Image = "rbxassetid://6035047391"; return end
-	if gui.TxtBox.Text == "" then
+	if name then gui.TxtBox.Text = name end
+	if getTxtBox() == "" then
 		gui.QueryBtn.ImageLabel.Image = "rbxassetid://6035047391"
 		canQuery = true
 		return
 	end
-	local s = gui.TxtBox.Text
+	if not table.find(recents.Keys, gui.TxtBox.Text) then
+		table.insert(recents.Keys, gui.TxtBox.Text)
+		plugin:SetSetting(tostring(placeId).."Recents", recents)
+	end
+	local s = getTxtBox()
 	gui.TxtBox.Text = ""
 	gui.TxtBox.BackgroundTransparency = 0.5
 	local value = connDS:GetAsync(s)
@@ -689,6 +781,8 @@ function disconnectDS()
 	reloadGui()
 end
 
+local styled = {}
+
 local function simpleBtnStyle(b:GuiButton)
 	if b:FindFirstChildOfClass("ImageLabel") then
 		local iClr = b:FindFirstChildOfClass("ImageLabel").ImageColor3
@@ -703,13 +797,29 @@ local function simpleBtnStyle(b:GuiButton)
 			b:FindFirstChildOfClass("ImageLabel").ImageColor3 = bClr
 		end)
 	end
+	table.insert(styled, b)
 end
 
-gui.TxtBox.FocusLost:Connect(function() connectToDS(); queryKey() end)
+gui.TxtBox.FocusLost:Connect(function(enterPressed)
+	if enterPressed then
+		connectToDS(); queryKey()
+	end
+end)
 gui.SaveBtn.MouseButton1Click:Connect(function() save() end)
 gui.QueryBtn.MouseButton1Click:Connect(function() queryKey() end)
 gui.ConnectBtn.MouseButton1Click:Connect(function() connectToDS() end)
 gui.DisconnectBtn.MouseButton1Click:Connect(function() disconnectDS() end)
+
+gui.RefreshBtn.MouseButton1Click:Connect(function()
+	if not orderedDS then
+		local list = keysTmp
+		
+		for key, _ in pairs(keysTmp) do
+			queryKey(key)
+		end
+		reloadKeys()
+	end
+end)
 
 settingsFrame.Back.MouseButton1Click:Connect(function()
 	settingsFrame.Visible = false
@@ -722,21 +832,88 @@ game["Run Service"].Heartbeat:Connect(function()
 		i = 0
 		for _, v in pairs(widget:GetDescendants()) do
 			if v:IsA("GuiButton") then
-				simpleBtnStyle(v)
+				if not table.find(styled, v) then
+					simpleBtnStyle(v)
+				end
 			end
 			if v.Name == "Value" and v:IsA("TextBox") then
 				v.Parent.Size = UDim2.new( 1,-12,0,  math.max((v.TextBounds.Y+30), 30)+4  )
 			end
 		end
-		local c = UDim2.fromOffset(0,0)
+		local c = UDim2.fromOffset(0,40)
 		for _, v in pairs(gui.Data:GetChildren()) do
 			if v:IsA("Frame") then
-				c += UDim2.fromOffset(0,v.AbsoluteSize.Y)
+				c += UDim2.fromOffset(0,v.AbsoluteSize.Y+1)
 			end
 		end
 		gui.Data.CanvasSize = c
 	end
 end)
 
+settingsFrame.RevList.MouseButton1Click:Connect(function()
+	reverseListing = not reverseListing
+	plugin:SetSetting("revList", reverseListing)
+	if reverseListing then
+		settingsFrame.RevList.BackgroundColor3 = Color3.fromRGB(0,0,0)
+	else
+		settingsFrame.RevList.BackgroundColor3 = Color3.fromRGB(255,255,255)
+	end
+end)
+if reverseListing then
+	settingsFrame.RevList.BackgroundColor3 = Color3.fromRGB(0,0,0)
+else
+	settingsFrame.RevList.BackgroundColor3 = Color3.fromRGB(255,255,255)
+end
+
 gui.TxtBox.Focused:Connect(function() gui.TxtBox.FocusLine.Visible = true end)
-gui.TxtBox.FocusLost:Connect(function() gui.TxtBox.FocusLine.Visible = false end)
+gui.TxtBox.FocusLost:Connect(function() gui.TxtBox.FocusLine.Visible = false; wait(0.1); gui.Recents.Visible = false end)
+
+gui.TxtBox:GetPropertyChangedSignal("Text"):Connect(function()
+	gui.Recents.Visible = #gui.TxtBox.Text > 0
+	if gui.Recents.Visible then
+		
+		for _, v in pairs(gui.Recents:GetChildren()) do
+			if v:IsA("TextButton") and v.Name ~= "_recent" then
+				v:Destroy()
+			end
+		end
+		
+		if not connDS then
+			for i, r in pairs(recents.DS) do
+				if tostring(r):lower():match(gui.TxtBox.Text:lower()) then
+					local btn = gui.Recents._recent:Clone()
+					btn.Parent = gui.Recents
+					btn.Text = r
+					btn.Visible = true
+					btn.Name = "item"
+					btn.MouseButton1Down:Connect(function()
+						gui.TxtBox.Text = r
+					end)
+					btn.rem.MouseButton1Down:Connect(function()
+						table.remove(recents.DS, table.find(recents.DS, r))
+						plugin:SetSetting(tostring(placeId).."Recents", recents)
+						btn:Destroy()
+					end)
+				end
+			end
+		else
+			for i, r in pairs(recents.Keys) do
+				if tostring(r):lower():match(gui.TxtBox.Text:lower()) then
+					local btn = gui.Recents._recent:Clone()
+					btn.Parent = gui.Recents
+					btn.Text = r
+					btn.Visible = true
+					btn.Name = "item"
+					btn.MouseButton1Down:Connect(function()
+						gui.TxtBox.Text = r
+					end)
+					btn.rem.MouseButton1Down:Connect(function()
+						table.remove(recents.Keys, table.find(recents.Keys, r))
+						plugin:SetSetting(tostring(placeId).."Recents", recents)
+						btn:Destroy()
+					end)
+				end
+			end
+		end
+	end
+end)
